@@ -1,6 +1,7 @@
-
+*.tmp
+.ffclass-*
 pc_specs.json
-
+*.json
 __pycache__/
 *.py[cod]
 *$py.class
@@ -15,3 +16,4 @@ ENV/
 
 Thumbs.db
 .DS_Store
+bin/
