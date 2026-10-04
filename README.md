@@ -69,3 +69,23 @@ Personal settings such as `pc_specs.json`, `ffclass_profile.json`, and `settings
 ## Project status
 
 Test the ZIP produced by this revision on another Windows computer before publishing it.
+
+## Third-party software
+
+FFClass is not affiliated with or endorsed by the FFmpeg project or The Qt Company.
+
+### FFmpeg
+
+The Windows release bundles `ffmpeg.exe` and `ffprobe.exe` from FFmpeg.
+
+- Version: [9.0.1 or 9.0.2 — confirm with `ffmpeg.exe -version`]
+- Build obtained from: [download page URL]
+- License of this build: [LGPL v2.1+ or GPL v2+ — see the `configuration:` line of `ffmpeg.exe -version`]
+- Source code for this version: [URL to the matching source archive]
+- License text: see `licenses/FFmpeg-LICENSE.txt` in the release folder
+
+FFmpeg is run as a separate program; FFClass does not link against it. FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+### PySide6 / Qt
+
+The interface uses PySide6 (Qt for Python), licensed under the LGPL v3. License information: <https://doc.qt.io/qtforpython-6/licenses.html>
