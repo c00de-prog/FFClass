@@ -10,22 +10,19 @@ import sys
 import threading
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QFileDialog, QFormLayout, QFrame,
     QDoubleSpinBox, QHBoxLayout, QLabel, QLineEdit, QListWidget, QMainWindow,
-    QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QStackedWidget,
+    QMessageBox, QProgressBar, QPushButton, QScrollArea, QStackedWidget,
     QVBoxLayout, QWidget,
 )
 
 from encoder import MediaEngine
-from processing_view import EncodingView
-from resource_manager import memory_total_gb, recommended_cpu_name
 
 
 BASE = Path(__file__).resolve().parent
-UI_VERSION = "2026.10.03.4"
 
 TEXT = {
     "RU": {
@@ -130,75 +127,25 @@ TEXT["EN"].update({
     "remove_hint": "Audio will be removed; no additional settings are needed.",
     "no_size_guarantee": "25 MB is a target with headroom. Check the actual size after processing.",
 })
-for language, translations in TEXT.items():
-    translations.update({
-        "source_detected": "Исходный формат: {format}" if language == "RU" else "Source format: {format}",
-        "output_format_question": "В какой формат перепаковать видео?" if language == "RU" else "Which output format do you want?",
-        "go_home": "На главную" if language == "RU" else "Home",
-    })
-TEXT["RU"].update({
-    "processing_window": "Обработка видео", "checking_tools": "Проверяем локальные инструменты…",
-    "close": "Закрыть", "show_details": "Показать детали", "why_encoder": "Почему выбран этот кодировщик?",
-    "tool_missing": "Локальные ffmpeg и ffprobe не найдены. При сборке приложения добавьте оба файла в папку bin.",
-    "tool_unpaired": "ffmpeg и ffprobe взяты из разных папок. Положите проверенную пару файлов в bin рядом с приложением.",
-    "tool_aac": "Этот FFmpeg не умеет нормально кодировать AAC. При сборке добавьте в bin более новую проверенную пару ffmpeg и ffprobe.",
-    "tool_broken": "Локальный FFmpeg не запускается. Проверьте файлы ffmpeg и ffprobe в папке bin.",
-    "encoder_saved": "Рекомендация после проверки ПК: {encoder}.",
-    "encoder_gpu": "Обнаруженная графика: {gpu}.",
-    "encoder_cpu": "libx264 выполняет H.264-кодирование на процессоре. Аппаратный кодировщик не был подтверждён при проверке ПК.",
-    "encoder_quality": "Выбран режим максимального качества: он явно использует libx264 на CPU.",
-    "encoder_hardware": "Аппаратный кодировщик рекомендован по сведениям о ПК. Реальная доступность подтверждается при запуске: при ошибке движок перейдёт на libx264.",
-    "encoder_actual": "В последней обработке использовался: {encoder}.",
-    "encoder_unknown": "Кодирование ещё не запускалось; рекомендация не является проверкой реальной работы устройства.",
-    "binary_path": "Используемый файл: {path}.",
-})
-TEXT["EN"].update({
-    "processing_window": "Processing video", "checking_tools": "Checking local media tools…",
-    "close": "Close", "show_details": "Show details", "why_encoder": "Why this encoder?",
-    "tool_missing": "Local ffmpeg and ffprobe were not found. Bundle both in the bin folder when building the app.",
-    "tool_unpaired": "ffmpeg and ffprobe come from different folders. Put a verified pair in bin beside the app.",
-    "tool_aac": "This FFmpeg cannot encode AAC properly. Bundle a verified newer ffmpeg/ffprobe pair in bin.",
-    "tool_broken": "Local FFmpeg could not start. Check the ffmpeg and ffprobe files in bin.",
-    "encoder_saved": "Recommendation from computer scan: {encoder}.",
-    "encoder_gpu": "Detected graphics: {gpu}.",
-    "encoder_cpu": "libx264 encodes H.264 on the CPU. Hardware encoding was not confirmed by the computer scan.",
-    "encoder_quality": "Maximum-quality mode explicitly selects libx264 on the CPU.",
-    "encoder_hardware": "The hardware encoder was recommended from system details. Actual availability is checked when processing; the engine falls back to libx264 on failure.",
-    "encoder_actual": "Encoder used by the most recent job: {encoder}.",
-    "encoder_unknown": "No job has run yet; a recommendation does not prove hardware availability.",
-    "binary_path": "Media binary: {path}.",
-})
-TEXT["RU"]["encoder_candidate"] = "Сканер ПК также предложил {encoder}. Это кандидат, его работоспособность ещё не проверена."
-TEXT["EN"]["encoder_candidate"] = "The PC scan also suggested {encoder}. It is a candidate, not a tested encoder."
-TEXT["RU"]["format_no_change"] = "Выберите формат, отличный от исходного."
-TEXT["EN"]["format_no_change"] = "Choose an output format different from the source."
 
 
 def _storage():
-    if not getattr(sys, "frozen", False):
-        try:
-            from config_storage import get_config_path, load_hardware_specs, save_hardware_specs
-            return Path(get_config_path()), load_hardware_specs, save_hardware_specs
-        except ImportError:
-            pass
-    if sys.platform == "win32":
-        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local") / "FFClass"
-    else:
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "FFClass"
-    path = base / "pc_specs.json"
-    if not getattr(sys, "frozen", False) and (BASE / "pc_specs.json").is_file():
+    try:
+        from config_storage import get_config_path, load_hardware_specs, save_hardware_specs
+        return Path(get_config_path()), load_hardware_specs, save_hardware_specs
+    except ImportError:
         path = BASE / "pc_specs.json"
 
-    def read():
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
+        def read():
+            try:
+                return json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                return None
 
-    def write(value):
-        atomic_json(path, value)
+        def write(value):
+            atomic_json(path, value)
 
-    return path, read, write
+        return path, read, write
 
 
 def atomic_json(path, value):
@@ -240,10 +187,11 @@ def hardware_data():
             result.update({k: v for k, v in scanned.items() if v is not None})
     except Exception:
         pass
-    result["cpu"] = recommended_cpu_name(result)
-    ram = memory_total_gb()
-    if ram is not None:
-        result["ram_gb"] = ram
+    try:
+        import psutil
+        result["ram_gb"] = round(psutil.virtual_memory().total / 1024**3, 1)
+    except ImportError:
+        pass
     return result
 
 
@@ -251,16 +199,12 @@ class ScanSignals(QObject):
     done = Signal(dict)
 
 
-class ReadinessSignals(QObject):
-    done = Signal(dict)
-
-
 DARK = """
-QWidget { background:#101827; color:#ecf1f8; font-family:'Segoe UI'; font-size:10pt; }
+QWidget { background:#101827; color:#ecf1f8; font:13px 'Segoe UI'; }
 QLabel { background:transparent; }
 QFrame#sidebar { background:#151f30; border-right:1px solid #29374a; }
 QFrame#card { background:#1a2638; border:1px solid #314158; border-radius:12px; }
-QLabel#title { font-size:17pt; font-weight:700; }
+QLabel#title { font-size:23px; font-weight:700; }
 QLabel#muted { color:#a9b8cb; }
 QPushButton { background:#26364c; border:1px solid #394d66; border-radius:8px; padding:10px 14px; text-align:center; }
 QPushButton:hover { background:#30445e; }
@@ -278,11 +222,11 @@ QProgressBar::chunk { background:#2879e4; border-radius:5px; }
 QScrollArea { border:0; }
 """
 LIGHT = """
-QWidget { background:#f5f7fa; color:#172437; font-family:'Segoe UI'; font-size:10pt; }
+QWidget { background:#f5f7fa; color:#172437; font:13px 'Segoe UI'; }
 QLabel { background:transparent; }
 QFrame#sidebar { background:#fff; border-right:1px solid #e0e6ee; }
 QFrame#card { background:#fff; border:1px solid #e0e6ee; border-radius:12px; }
-QLabel#title { font-size:17pt; font-weight:700; }
+QLabel#title { font-size:23px; font-weight:700; }
 QLabel#muted { color:#536174; }
 QPushButton { background:#fff; color:#172437; border:1px solid #d3dce8; border-radius:8px; padding:10px 14px; text-align:center; }
 QPushButton:hover { background:#eef3f9; }
@@ -329,7 +273,7 @@ def button(text, callback, primary=False):
 class MainWindow(QMainWindow):
     def __init__(self, config_data=None):
         super().__init__()
-        self.setWindowTitle(f"FFClass · UI {UI_VERSION}")
+        self.setWindowTitle("FFClass")
         self.resize(940, 660)
         self.setMinimumSize(670, 510)
         self.setAcceptDrops(True)
@@ -353,9 +297,6 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._scan_signals = ScanSignals(self)
         self._scan_signals.done.connect(self._scan_finished)
-        self._readiness_signals = ReadinessSignals(self)
-        self._readiness_signals.done.connect(self._tools_checked)
-        self._last_encoder = None
         self._build_shell()
         self.apply_theme()
         self.retranslate()
@@ -553,7 +494,6 @@ class MainWindow(QMainWindow):
         self.format_label = label("")
         three.addWidget(self.format_label)
         self.output_format = QComboBox()
-        self.output_format.currentIndexChanged.connect(self._render_summary)
         three.addWidget(self.output_format)
         self.channels_label = label("")
         three.addWidget(self.channels_label)
@@ -612,7 +552,7 @@ class MainWindow(QMainWindow):
         three.addStretch()
         self.wizard_stack.addWidget(third)
 
-        # Stage 3: summary and action. Processing gets its own lightweight page.
+        # Stage 3: summary and action. Progress replaces the summary in-place.
         final, four = card()
         self.summary_title = label("")
         self.summary_title.setObjectName("title")
@@ -622,6 +562,18 @@ class MainWindow(QMainWindow):
         four.addWidget(self.summary)
         self.summary_warning = label("", True)
         four.addWidget(self.summary_warning)
+        self.progress_card = QWidget()
+        progress_layout = QVBoxLayout(self.progress_card)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        self.status = label("", True)
+        progress_layout.addWidget(self.status)
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        progress_layout.addWidget(self.progress)
+        self.cancel_button = button("", self.cancel_encoding)
+        progress_layout.addWidget(self.cancel_button)
+        self.progress_card.hide()
+        four.addWidget(self.progress_card)
         actions = QHBoxLayout()
         self.wizard_back_3 = button("", self.wizard_back)
         self.start_button = button("", self.start_encoding, True)
@@ -667,8 +619,6 @@ class MainWindow(QMainWindow):
             self.pc_labels[key] = text
             self.pc_captions[key] = caption_label
         layout.addWidget(info)
-        self.why_button = button("", self.explain_encoder)
-        layout.addWidget(self.why_button)
         self.refresh_button = button("", self.refresh_pc)
         layout.addWidget(self.refresh_button)
         layout.addStretch()
@@ -744,15 +694,16 @@ class MainWindow(QMainWindow):
         self._goal_changed()
         self._render_wizard()
         self.start_button.setText(t("start"))
+        self.cancel_button.setText(t("cancel"))
+        if not self._busy:
+            self.status.setText(t("preparing"))
         self.files_title.setText(t("files"))
         self.files_hint.setText(t("files_hint"))
         self.open_folder_button.setText(t("open_folder"))
         self.pc_title.setText(t("pc"))
         self.refresh_button.setText(t("refresh"))
-        self.why_button.setText(t("why_encoder"))
         for key, item in self.pc_captions.items():
             item.setText(t(key))
-        self.update_pc()
         self.update_history()
 
     def _preview_language(self):
@@ -775,7 +726,9 @@ class MainWindow(QMainWindow):
         self.update_history()
         if not hasattr(self, "engine"):
             self.config["language"] = self.profile["language"]
-            self.engine = MediaEngine(self.config, None, self)
+            self._engine_timer = QTimer(self)
+            self._engine_timer.setInterval(1000)
+            self.engine = MediaEngine(self.config, self._engine_timer, self)
             self.engine.videoSelected.connect(self.video_ready)
             self.engine.processingProgress.connect(self.encoding_progress)
             self.engine.processingFinished.connect(self.encoding_finished)
@@ -832,38 +785,9 @@ class MainWindow(QMainWindow):
         data = self.config.get("hardware") or {}
         for key, target in self.pc_labels.items():
             value = data.get(key, "—")
-            if key == "cpu":
-                value = recommended_cpu_name(data)
-            if key == "ram_gb":
-                if value in (None, "—", ""):
-                    value = memory_total_gb() or "—"
-                if value != "—":
-                    value = f"{value} {'GB' if self.profile['language'] == 'EN' else 'ГБ'}"
+            if key == "ram_gb" and value != "—":
+                value = f"{value} ГБ"
             target.setText(str(value))
-
-    def explain_encoder(self):
-        hardware = self.config.get("hardware") or {}
-        recommended = self.engine._recommended_encoder() if hasattr(self, "engine") else "libx264"
-        lines = [self.tr("encoder_saved").format(encoder=recommended),
-                 self.tr("encoder_gpu").format(gpu=hardware.get("gpu") or "—")]
-        if self.info and self.goal.currentData() == "compress_flow" and self.priority.currentData() == "quality":
-            lines.append(self.tr("encoder_quality"))
-        elif recommended == "libx264":
-            lines.append(self.tr("encoder_cpu"))
-        else:
-            lines.append(self.tr("encoder_hardware"))
-        candidate = hardware.get("ffmpeg_encoder")
-        if candidate and candidate != hardware.get("rec"):
-            from encoder import extract_encoder
-            parsed = extract_encoder(candidate)
-            if parsed != recommended:
-                lines.append(self.tr("encoder_candidate").format(encoder=parsed))
-        lines.append(self.tr("encoder_actual").format(encoder=self._last_encoder)
-                     if getattr(self, "_last_encoder", None) else self.tr("encoder_unknown"))
-        binary = MediaEngine._find_media_binary("ffmpeg")
-        if binary:
-            lines.append(self.tr("binary_path").format(path=binary))
-        QMessageBox.information(self, self.tr("why_encoder"), "\n\n".join(lines))
 
     def edit_profile(self):
         dialog = QDialog(self)
@@ -923,8 +847,11 @@ class MainWindow(QMainWindow):
         description = f"{info['name']}  ·  {info['size_label']}  ·  {info['resolution']}  ·  {info['duration_label']}"
         self.file_label.setText(description)
         self.wizard_file.setText(description)
+        self.progress_card.hide()
         self.start_button.setEnabled(True)
-        self.goal.setCurrentIndex(0)
+        saved = self.preferences.get("last_options", {})
+        task = saved.get("task", "compress_flow") if isinstance(saved, dict) else "compress_flow"
+        self.goal.setCurrentIndex(max(0, self.goal.findData(task)))
         self._goal_changed()
         self.wizard_stack.setCurrentIndex(0)
         self._render_wizard()
@@ -941,13 +868,9 @@ class MainWindow(QMainWindow):
         self.answer.clear()
         keys = {"compress_flow": ("discord", "telegram", "disk"),
                 "audio_flow": ("davinci", "change_audio", "remove_audio"),
-                "remux_flow": ("detected_source",)}[flow]
+                "remux_flow": ("mkv_source", "mov_source", "webm_source")}[flow]
         for key in keys:
-            if key == "detected_source":
-                source = Path(self.info["path"]).suffix.lower().lstrip(".") if self.info else "—"
-                self.answer.addItem(t("source_detected").format(format=source.upper()), key)
-            else:
-                self.answer.addItem(t(key), key)
+            self.answer.addItem(t(key), key)
         index = self.answer.findData(previous)
         if index >= 0:
             self.answer.setCurrentIndex(index)
@@ -960,37 +883,30 @@ class MainWindow(QMainWindow):
         if not flow or not answer:
             return
         t = self.tr
-        self.question_title.setText(t({"compress_flow": "compress_question", "audio_flow": "audio_question", "remux_flow": "output_format_question"}[flow]))
+        self.question_title.setText(t({"compress_flow": "compress_question", "audio_flow": "audio_question", "remux_flow": "remux_question"}[flow]))
         self.question_hint.setText(t("question_hint"))
         self.details_title.setText(t({"compress_flow": "compress_details", "audio_flow": "audio_details", "remux_flow": "remux_details"}[flow]))
         self.detail_note.setText(t({"compress_flow": "compress_detail_hint", "audio_flow": "audio_detail_hint", "remux_flow": "remux_detail_hint"}[flow]))
         self.answer_note.setText(t("no_size_guarantee") if answer == "discord" else
                                  t("pcm_hint") if answer == "davinci" else
                                  t("remove_hint") if answer == "remove_audio" else
-                                 "" if flow == "remux_flow" else "")
+                                 t("remux_warning") if flow == "remux_flow" else "")
         previous = self.output_format.currentData()
         self.output_format.clear()
         if flow == "audio_flow":
             formats = [("PCM / WAV", "pcm"), ("MP3", "mp3"), ("AAC", "aac"), ("FLAC", "flac")]
         else:
-            formats = [("MP4", "mp4"), ("MKV", "mkv")]
+            formats = [("MP4", "mp4")] if flow == "remux_flow" else [("MP4", "mp4"), ("MKV", "mkv")]
         for name, value in formats:
             self.output_format.addItem(name, value)
         self.format_label.setText(t("format_audio") if flow == "audio_flow" else t("format_video"))
-        source = Path(self.info["path"]).suffix.lower().lstrip(".") if self.info else ""
-        requested = "pcm" if answer == "davinci" else (
-            "mkv" if flow == "remux_flow" and source == "mp4" else
-            "mp4" if flow == "remux_flow" else previous
-        )
+        requested = "pcm" if answer == "davinci" else previous
         index = self.output_format.findData(requested)
         if index >= 0:
             self.output_format.setCurrentIndex(index)
         self.output_format.setEnabled(answer not in {"davinci", "remove_audio"})
-        self.format_label.setVisible(answer != "remove_audio")
-        self.output_format.setVisible(answer != "remove_audio")
-        if flow == "remux_flow":
-            self.details_title.setText(t("output_format_question"))
-            self.detail_note.setText(t("source_detected").format(format=source.upper()))
+        self.format_label.setVisible(flow != "remux_flow" and answer != "remove_audio")
+        self.output_format.setVisible(flow != "remux_flow" and answer != "remove_audio")
         self.channels_label.setVisible(flow == "audio_flow" and answer != "remove_audio")
         self.channels.setVisible(flow == "audio_flow" and answer != "remove_audio")
         self.priority_label.setVisible(flow == "compress_flow")
@@ -1005,7 +921,7 @@ class MainWindow(QMainWindow):
         flow = self.goal.currentData()
         index = self.wizard_stack.currentIndex()
         count = 3 if flow == "remux_flow" or (flow == "audio_flow" and self.answer.currentData() == "remove_audio") else 4
-        shown = min(index if flow == "remux_flow" and index > 0 else index + 1, count)
+        shown = min(index + 1, count)
         self.wizard_steps.setText(self.tr("step_indicator").format(step=shown, total=count))
         if index == 3:
             self._render_summary()
@@ -1014,11 +930,7 @@ class MainWindow(QMainWindow):
         index = self.wizard_stack.currentIndex()
         flow = self.goal.currentData()
         answer = self.answer.currentData()
-        if flow == "remux_flow" and index == 0:
-            self.wizard_stack.setCurrentIndex(2)
-            self._render_wizard()
-            return
-        skip_details = flow == "audio_flow" and answer == "remove_audio"
+        skip_details = flow == "remux_flow" or (flow == "audio_flow" and answer == "remove_audio")
         self.wizard_stack.setCurrentIndex(3 if index == 1 and skip_details else min(3, index + 1))
         self._render_wizard()
 
@@ -1026,11 +938,7 @@ class MainWindow(QMainWindow):
         index = self.wizard_stack.currentIndex()
         flow = self.goal.currentData()
         answer = self.answer.currentData()
-        if flow == "remux_flow" and index == 2:
-            self.wizard_stack.setCurrentIndex(0)
-            self._render_wizard()
-            return
-        skip_details = flow == "audio_flow" and answer == "remove_audio"
+        skip_details = flow == "remux_flow" or (flow == "audio_flow" and answer == "remove_audio")
         self.wizard_stack.setCurrentIndex(1 if index == 3 and skip_details else max(0, index - 1))
         self._render_wizard()
 
@@ -1039,12 +947,8 @@ class MainWindow(QMainWindow):
             return
         flow = self.goal.currentData()
         answer = self.answer.currentData()
-        if not flow or not answer:
-            return
         t = self.tr
-        lines = [self.info["name"], t(flow)]
-        if flow != "remux_flow":
-            lines.append(t(answer))
+        lines = [self.info["name"], t(flow), t(answer)]
         warning = ""
         valid = True
         if flow == "compress_flow":
@@ -1060,12 +964,10 @@ class MainWindow(QMainWindow):
             if answer == "davinci":
                 warning = t("pcm_hint")
         else:
-            actual = Path(self.info["path"]).suffix.lower().lstrip(".")
-            selected = self.output_format.currentData()
-            valid = selected != actual
-            lines += [t("source_detected").format(format=actual.upper()),
-                      t("format_video") + ": " + self.output_format.currentText()]
-            warning = t("format_no_change") if not valid else t("remux_warning") if selected == "mp4" else ""
+            expected = {"mkv_source": ".mkv", "mov_source": ".mov", "webm_source": ".webm"}[answer]
+            actual = Path(self.info["path"]).suffix.lower()
+            valid = expected == actual
+            warning = t("remux_warning") if valid else t("wrong_source").format(source=expected.upper(), actual=actual.upper())
         self.summary.setText("\n".join(lines))
         self.summary_warning.setText(warning)
         self.start_button.setEnabled(valid and not self._busy)
@@ -1098,7 +1000,7 @@ class MainWindow(QMainWindow):
                        "audio_format": "pcm" if answer == "davinci" else fmt if answer == "change_audio" else "aac",
                        "audio_channels": self.channels.currentData()}
         else:
-            options = {"goal": "remux", "container": fmt}
+            options = {"goal": "remux", "container": "mp4"}
         self.preferences["last_options"] = {"task": flow, "answer": answer, "format": fmt}
         try:
             atomic_json(encoding_settings_path(self.config), self.preferences)
@@ -1107,98 +1009,27 @@ class MainWindow(QMainWindow):
         self._busy = True
         self.start_button.setEnabled(False)
         self.wizard_back_3.setEnabled(False)
-        self.progress_dialog = EncodingView(self, self.cancel_encoding, self.return_home)
-        self.progress_dialog.title.setText(self.tr("processing_window"))
-        self.progress_dialog.description.setText(self.tr("checking_tools"))
-        self.progress_dialog.action.setText(self.tr("cancel"))
-        self.progress_dialog.action.setEnabled(False)
-        self._pending_options = options
-        self._suspend_dashboard()
-        selected_path = self.info["path"]
-        threading.Thread(target=self._check_media_for_job, args=(selected_path,),
-                         name="FFClassMediaCheck", daemon=True).start()
-
-    def _check_media_for_job(self, selected_path):
-        report = MediaEngine.media_readiness()
-        if report.get("ready"):
-            try:
-                report["metadata"] = self.engine._probe_video(Path(selected_path))
-            except (OSError, ValueError, RuntimeError) as exc:
-                report["probe_error"] = str(exc)
-        self._readiness_signals.done.emit(report)
-
-    def _suspend_dashboard(self):
-        # Store the choices as plain data, then discard the inactive wizard and
-        # its widgets. No hidden video page or animation keeps running.
-        self.processing_view = self.progress_dialog
-        self.root.addWidget(self.processing_view)
-        self.root.setCurrentWidget(self.processing_view)
-        dashboard = self.dashboard_view
-        self.root.removeWidget(dashboard)
-        dashboard.deleteLater()
-        self.dashboard_view = None
-
-    def return_home(self):
-        if self._busy:
-            return
-        processing = getattr(self, "processing_view", None)
-        if processing:
-            self.root.removeWidget(processing)
-            processing.deleteLater()
-            self.processing_view = None
-            self.progress_dialog = None
-        self.info = None
-        self._pending_options = None
-        self.engine.clearSelectedVideo()
-        self.dashboard_view = self._build_dashboard()
-        self.root.addWidget(self.dashboard_view)
-        self.show_dashboard()
-        self.retranslate()
-        self.switch_page(0)
-
-    def _tools_checked(self, report):
-        if not self._busy or not getattr(self, "progress_dialog", None):
-            return
-        if not report.get("ready"):
-            reason = report.get("reason", "broken")
-            self.encoding_error(self.tr("tool_" + reason if reason in {"missing", "unpaired", "aac", "broken"} else "tool_broken"))
-            return
-        if report.get("probe_error"):
-            self.encoding_error(report["probe_error"])
-            return
-        self.engine.selected_video_info = report["metadata"]
-        self.progress_dialog.description.setText(self.tr("starting"))
-        self.progress_dialog.action.setEnabled(True)
-        self.engine.startEncoding(json.dumps(self._pending_options))
+        self.progress.setValue(0)
+        self.status.setText(self.tr("starting"))
+        self.progress_card.show()
+        self.engine.startEncoding(json.dumps(options))
 
     def encoding_progress(self, payload):
         info = json.loads(payload)
-        percent = int(float(info.get("percent") or 0))
-        status = f"{percent}%  ·  {self.tr('remaining')}: {info.get('eta', '—')}"
-        if info.get("encoder"):
-            self._last_encoder = info["encoder"]
-        dialog = getattr(self, "progress_dialog", None)
-        if dialog and dialog.active:
-            dialog.bar.setValue(percent)
-            dialog.percent.setText(f"{percent}%")
-            state = str(info.get("status") or "")
-            dialog.description.setText(state if "libx264" in state else status)
+        self.progress.setValue(int(float(info.get("percent") or 0)))
+        self.status.setText(f"{self.progress.value()}%  ·  {self.tr('remaining')}: {info.get('eta', '—')}")
 
     def encoding_finished(self, payload):
         self._busy = False
+        self.start_button.setEnabled(True)
+        self.wizard_back_3.setEnabled(True)
         result = json.loads(payload)
-        if result.get("encoder"):
-            self._last_encoder = result["encoder"]
-        dialog = getattr(self, "progress_dialog", None)
         if result.get("cancelled"):
-            if dialog:
-                dialog.finish(self.tr("cancelled"), self.tr("go_home"))
+            self.status.setText(self.tr("cancelled"))
             return
         path = result.get("output_path", "")
-        if dialog:
-            dialog.bar.setValue(100)
-            dialog.percent.setText("100%")
-            dialog.finish(self.tr("done") + result.get("output_name", ""), self.tr("go_home"))
+        self.status.setText(self.tr("done") + result.get("output_name", ""))
+        self.progress.setValue(100)
         if path:
             self.history = [path] + [p for p in self.history if p != path]
             self.history = self.history[:15]
@@ -1207,29 +1038,18 @@ class MainWindow(QMainWindow):
                 atomic_json(encoding_settings_path(self.config), self.preferences)
             except OSError:
                 pass
+            self.update_history()
 
     def encoding_error(self, message):
         self._busy = False
-        dialog = getattr(self, "progress_dialog", None)
-        if dialog and dialog.active:
-            dialog.title.setText(self.tr("error"))
-            dialog.details.setPlainText(str(message))
-            dialog.details_button.setText(self.tr("show_details"))
-            dialog.details_button.show()
-            friendly = str(message) if len(str(message)) < 230 and not str(message).startswith(("Ошибка FFmpeg:", "FFmpeg error:")) else self.tr("error")
-            dialog.finish(friendly, self.tr("go_home"))
-        else:
-            QMessageBox.warning(self, self.tr("error"), str(message))
+        self.start_button.setEnabled(True)
+        self.wizard_back_3.setEnabled(True)
+        self.progress_card.hide()
+        self.status.setText(str(message))
+        QMessageBox.warning(self, self.tr("error"), str(message))
 
     def cancel_encoding(self):
         self.engine.cancelEncoding()
-
-    def closeEvent(self, event):
-        if self._busy:
-            self.cancel_encoding()
-            event.ignore()
-            return
-        super().closeEvent(event)
 
     def update_history(self):
         self.files_list.clear()
