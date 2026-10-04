@@ -25,36 +25,47 @@ Selecting a file reads only its name, size, and extension. After the user clicks
 | `resource_manager.py` | Physical RAM detection without background polling |
 | `stage_ffmpeg.py` | Checks and stages a local FFmpeg pair for packaging |
 | `build_windows.py` | Builds a self-contained Windows app folder with PyInstaller |
+| `START_HERE.txt`, `Remove FFClass.cmd`, `remove_ffclass.ps1` | Portable ZIP guide and optional removal of the portable app and local settings |
+| `installer.iss`, `build_installer.py` | Package the app folder as a Windows installer with Inno Setup |
+| `run_ffclass.cmd` | Source launcher and build menu |
 | `config_storage.py`, `oscheck.py`, `hardware_db.py` | Existing configuration and PC detection modules |
 
-## Run from source on Windows
+## Install or run FFClass on Windows
 
-Install the project's development dependencies, including `PySide6`, in your Python environment. From the project root, run:
+### 1. Portable ZIP (current release)
 
-```powershell
-python gui.py
-```
+Download `FFClass-Windows.zip` from the GitHub release **Assets**. Extract the whole archive and launch `FFClass/FFClass.exe`. Keep its `_internal` folder beside the EXE. `FFClass/START_HERE.txt` contains quick instructions in English and Russian. Python, PySide6, FFmpeg, and ffprobe are bundled. This is a portable app; it does not register itself in Windows Installed apps.
 
-For media processing, put a matching `ffmpeg.exe` and `ffprobe.exe` pair in `bin/`. You can stage a pair from another local folder:
+To remove the portable app **and its settings**, close FFClass and run `FFClass/Remove FFClass.cmd`. It asks for confirmation, then removes the extracted app folder and `%LOCALAPPDATA%\FFClass`. Move any personal files out of the FFClass folder first. Videos outside that folder are not removed. You can also manually delete those two folders.
+
+### 2. Optional Windows installer (future)
+
+The project also has Inno Setup build scripts for a traditional installer with Start menu and Windows Installed apps integration. Publish this separately only after testing its installation and uninstallation.
+
+### 3. Run from this repository
+
+If a packaged app does not work on your PC, download or clone the repository and double-click `run_ffclass.cmd`. Select **1** to run from source. The launcher creates `.venv`, installs `requirements.txt` if PySide6 is missing, and starts FFClass. Later runs reuse the environment. Select **2** to build the installer yourself or **3** for the portable ZIP.
+
+This path requires **Python 3 installed on Windows** and internet access for the initial Python package installation. The launcher looks for `bin/ffmpeg.exe` and `bin/ffprobe.exe`; if they are missing, it tries to stage a matching pair already installed on the PC. Without either pair, the UI can open but video processing is unavailable. A `.cmd` file cannot run Python code without an interpreter.
+
+To prepare a verified pair manually in a development checkout:
 
 ```powershell
 python stage_ffmpeg.py --source "C:\path\to\ffmpeg\bin"
 ```
 
-The staging script also creates `bin/ffclass_ffmpeg.json`, which the build script verifies. The `bin/` folder is prepared on the build machine. Whether it is committed to Git is a project choice; the build script requires it to be present locally.
+This also creates `bin/ffclass_ffmpeg.json`, which the build script verifies.
 
-## Build for Windows
+## Build and publish from Windows
 
-After testing the source version, install `PyInstaller` in the development environment and run:
+On a Windows build machine, prepare the local FFmpeg pair as above. Double-click `run_ffclass.cmd` and select **3**, or install `requirements.txt` and `requirements-build.txt` in your development environment and run `python build_windows.py`. No Inno Setup installation is required for the ZIP.
 
-```powershell
-python build_windows.py
-```
+The build creates `dist/FFClass/` and `dist/FFClass-Windows.zip`, including the quick guide and removal scripts. Test the extracted ZIP on another Windows computer: launch FFClass, process a short video, and verify removal with no personal files inside the FFClass folder. Then create a GitHub Release with a version tag (for example, `v0.1.0`) and attach `dist/FFClass-Windows.zip` under **Assets**. The automatically generated repository "Source code (zip)" download is not the packaged Windows app.
 
-The output is `dist/FFClass/`. Distribute the **entire folder**, not only `FFClass.exe`. End users do not need to install Python, a virtual environment, or FFmpeg separately. Build the Windows release on Windows.
+To build the optional installer later, install [Inno Setup](https://jrsoftware.org/isinfo.php), select **2** in `run_ffclass.cmd`, and test `dist/FFClass-Setup-0.1.0-Windows.exe` separately. An unsigned EXE may show a Microsoft Defender SmartScreen warning; signing and reputation are separate release concerns.
 
 Personal settings such as `pc_specs.json`, `ffclass_profile.json`, and `settings.json` should not be bundled with a public release. In the packaged app, settings are stored under `%LOCALAPPDATA%\FFClass`.
 
 ## Project status
 
-The source version has been tested on Windows. Building and testing the standalone `dist/FFClass/` release on another Windows computer is the next step.
+Test the ZIP produced by this revision on another Windows computer before publishing it.

@@ -2,18 +2,17 @@
 
 No GUI widgets live here. QProcess emits progress back to gui.py via signals.
 """
-import base64
 import json
 import re
 import shutil
 import subprocess
 import sys
-import threading
 import time
 from fractions import Fraction
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QProcess, QTimer, Signal, Slot
+from resource_manager import recommended_encoder_name
 
 
 def extract_encoder(value):
@@ -65,18 +64,55 @@ class MediaEngine(QObject):
                 pass
         return status
 
+    @classmethod
+    def media_readiness(cls):
+        """Check the actual pair and AAC before a job; safe to run in a worker thread."""
+        ffmpeg = cls._find_media_binary("ffmpeg")
+        ffprobe = cls._find_media_binary("ffprobe")
+        if not ffmpeg or not ffprobe:
+            return {"ready": False, "reason": "missing", "ffmpeg": ffmpeg or "", "ffprobe": ffprobe or ""}
+        if Path(ffmpeg).resolve().parent != Path(ffprobe).resolve().parent:
+            return {"ready": False, "reason": "unpaired", "ffmpeg": ffmpeg, "ffprobe": ffprobe}
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            version = subprocess.run([ffmpeg, "-version"], stdin=subprocess.DEVNULL,
+                                     capture_output=True, timeout=5, creationflags=flags)
+            probe = subprocess.run([ffprobe, "-version"], stdin=subprocess.DEVNULL,
+                                   capture_output=True, timeout=5, creationflags=flags)
+            if version.returncode or probe.returncode:
+                return {"ready": False, "reason": "broken", "ffmpeg": ffmpeg, "ffprobe": ffprobe}
+            smoke = subprocess.run(
+                [ffmpeg, "-v", "error", "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
+                 "-t", "0.1", "-c:a", "aac", "-f", "null", "-"],
+                stdin=subprocess.DEVNULL, capture_output=True, timeout=10, creationflags=flags)
+            if smoke.returncode:
+                return {"ready": False, "reason": "aac", "ffmpeg": ffmpeg, "ffprobe": ffprobe}
+            version_lines = version.stdout.decode("utf-8", "replace").splitlines()
+            return {"ready": True, "reason": "ready", "ffmpeg": ffmpeg, "ffprobe": ffprobe,
+                    "version": version_lines[0] if version_lines else ""}
+        except (OSError, subprocess.SubprocessError):
+            return {"ready": False, "reason": "broken", "ffmpeg": ffmpeg, "ffprobe": ffprobe}
+
     @staticmethod
     def _find_media_binary(name):
         executable = f"{name}.exe" if sys.platform == "win32" else name
         root = Path(__file__).resolve().parent
-        candidates = (
-            root / executable,
-            root / "bin" / executable,
-            root / "ffmpeg" / "bin" / executable,
-        )
+        # The packaged pair wins over any ancient FFmpeg on the user's PATH.
+        locations = []
+        if getattr(sys, "frozen", False):
+            locations.extend((Path(sys.executable).resolve().parent,
+                              Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))))
+        locations.append(root)
+        candidates = []
+        for location in locations:
+            candidates.extend((location / "bin" / executable,
+                               location / "ffmpeg" / "bin" / executable,
+                               location / executable))
         for candidate in candidates:
             if candidate.is_file():
                 return str(candidate)
+        if getattr(sys, "frozen", False):
+            return None  # Installed FFClass must never depend on the system PATH.
         return shutil.which(executable) or shutil.which(name)
 
 
@@ -111,16 +147,16 @@ class MediaEngine(QObject):
             )
             return
 
-        def worker():
-            try:
-                info = self._probe_video(path)
-                self.selected_video_path = path
-                self.selected_video_info = info
-                self.videoSelected.emit(json.dumps(info, ensure_ascii=False))
-            except Exception as error:
-                self.processingError.emit(str(error))
-
-        threading.Thread(target=worker, name="FFClassVideoProbe", daemon=True).start()
+        # No child process starts here: filename, extension and size are enough
+        # to offer a task. Probe detailed media metadata after Start is clicked.
+        self.selected_video_path = path
+        self.selected_video_info = None
+        info = {
+            "name": path.name, "path": str(path), "size": path.stat().st_size,
+            "size_label": self._format_bytes(path.stat().st_size),
+            "resolution": "—", "duration_label": "—", "duration": 0,
+        }
+        self.videoSelected.emit(json.dumps(info, ensure_ascii=False))
 
 
     def _probe_video(self, path):
@@ -128,8 +164,8 @@ class MediaEngine(QObject):
         if not ffprobe:
             raise RuntimeError(
                 self._message(
-                    "ffprobe не найден. Положите ffprobe.exe рядом с программой или добавьте FFmpeg в PATH.",
-                    "ffprobe was not found. Put ffprobe next to the app or add FFmpeg to PATH.",
+                    "ffprobe не найден. При сборке добавьте ffmpeg и ffprobe в папку bin рядом с FFClass.",
+                    "ffprobe was not found. Bundle ffmpeg and ffprobe in the bin folder beside FFClass.",
                 )
             )
         command = [
@@ -170,21 +206,8 @@ class MediaEngine(QObject):
         duration = float(file_format.get("duration") or 0)
         size = int(file_format.get("size") or path.stat().st_size)
         bitrate = int(video.get("bit_rate") or file_format.get("bit_rate") or 0)
+        # Called after Start. No FFmpeg preview process is created.
         thumbnail = ""
-        ffmpeg = self._find_media_binary("ffmpeg")
-        if ffmpeg:
-            try:
-                frame = subprocess.run(
-                    [ffmpeg, "-nostdin", "-v", "error", "-ss", str(min(1.0, max(0.0, duration / 2))),
-                     "-i", str(path), "-frames:v", "1", "-vf", "scale=160:-2", "-f", "image2pipe",
-                     "-vcodec", "mjpeg", "pipe:1"],
-                    stdin=subprocess.DEVNULL, capture_output=True, timeout=6,
-                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-                )
-                if frame.returncode == 0 and 0 < len(frame.stdout) < 500_000:
-                    thumbnail = "data:image/jpeg;base64," + base64.b64encode(frame.stdout).decode("ascii")
-            except (OSError, subprocess.SubprocessError):
-                pass
         return {
             "name": path.name,
             "path": str(path),
@@ -212,17 +235,7 @@ class MediaEngine(QObject):
 
 
     def _recommended_encoder(self):
-        hardware = self.config_data.get("hardware", {})
-        encoder = extract_encoder(
-            hardware.get("rec") or hardware.get("ffmpeg_encoder") or "libx264"
-        ).lower()
-        allowed = {
-            "h264_nvenc", "hevc_nvenc", "av1_nvenc",
-            "h264_qsv", "hevc_qsv", "av1_qsv",
-            "h264_amf", "hevc_amf", "av1_amf",
-            "libx264", "libx265", "libsvtav1", "libaom-av1",
-        }
-        return encoder if encoder in allowed else "libx264"
+        return recommended_encoder_name(self.config_data.get("hardware"))
 
 
     @staticmethod
@@ -403,8 +416,8 @@ class MediaEngine(QObject):
         if not ffmpeg:
             self.processingError.emit(
                 self._message(
-                    "FFmpeg не найден. Положите ffmpeg.exe рядом с программой или добавьте его в PATH.",
-                    "FFmpeg was not found. Put ffmpeg next to the app or add it to PATH.",
+                    "FFmpeg не найден. При сборке добавьте ffmpeg и ffprobe в папку bin рядом с FFClass.",
+                    "FFmpeg was not found. Bundle ffmpeg and ffprobe in the bin folder beside FFClass.",
                 )
             )
             return
@@ -506,7 +519,8 @@ class MediaEngine(QObject):
         process.finished.connect(self._encoding_finished)
         process.errorOccurred.connect(self._encoding_process_error)
         self.ffmpeg_process = process
-        self._metrics_timer.start()
+        if self._metrics_timer:
+            self._metrics_timer.start()
         process.start()
 
 
@@ -550,17 +564,27 @@ class MediaEngine(QObject):
 
     def _encoding_process_error(self, error):
         if error == QProcess.ProcessError.FailedToStart:
-            self._metrics_timer.stop()
+            if self._metrics_timer:
+                self._metrics_timer.stop()
             if self.output_path:
                 self.output_path.unlink(missing_ok=True)
+            process = self.ffmpeg_process
             self.ffmpeg_process = None
+            if process:
+                process.deleteLater()
             self.processingError.emit(self._message("Не удалось запустить FFmpeg", "Could not start FFmpeg"))
 
 
     def _encoding_finished(self, exit_code, _exit_status):
-        self._metrics_timer.stop()
+        if self._metrics_timer:
+            self._metrics_timer.stop()
         process = self.ffmpeg_process
+        if process is None:
+            return
         stderr = bytes(process.readAllStandardError()).decode("utf-8", errors="replace") if process else ""
+        self.ffmpeg_process = None
+        if process:
+            process.deleteLater()
         cancelled = self._cancel_requested
         if cancelled:
             if self.output_path:
@@ -582,9 +606,15 @@ class MediaEngine(QObject):
         elif exit_code != 0:
             if self.output_path:
                 self.output_path.unlink(missing_ok=True)
-            self.processingError.emit(
-                self._message("Ошибка FFmpeg: ", "FFmpeg error: ") + (stderr[-500:].strip() or str(exit_code))
-            )
+            if "encoder 'aac' is experimental" in stderr.lower() or "experimental codecs are not enabled" in stderr.lower():
+                self.processingError.emit(self._message(
+                    "Используется устаревший FFmpeg с экспериментальным AAC. Установите проверенные ffmpeg.exe и ffprobe.exe в папку bin рядом с приложением.",
+                    "This FFmpeg build has experimental AAC. Place a verified ffmpeg and ffprobe pair in the bin folder next to the app."
+                ))
+            else:
+                self.processingError.emit(
+                    self._message("Ошибка FFmpeg: ", "FFmpeg error: ") + (stderr[-500:].strip() or str(exit_code))
+                )
         else:
             size = self.output_path.stat().st_size if self.output_path and self.output_path.exists() else 0
             result = {
@@ -595,7 +625,6 @@ class MediaEngine(QObject):
                 "encoder": self._active_encoder,
             }
             self.processingFinished.emit(json.dumps(result, ensure_ascii=False))
-        self.ffmpeg_process = None
 
 
     @Slot()
@@ -605,7 +634,7 @@ class MediaEngine(QObject):
             return
         self._cancel_requested = True
         process.terminate()
-        QTimer.singleShot(2000, lambda: process.kill() if process.state() != QProcess.ProcessState.NotRunning else None)
+        QTimer.singleShot(2000, process, lambda: process.kill() if process.state() != QProcess.ProcessState.NotRunning else None)
 
 
     @staticmethod

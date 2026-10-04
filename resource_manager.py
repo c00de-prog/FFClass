@@ -43,8 +43,8 @@ def memory_total_gb():
 def recommended_cpu_name(data):
     precise = str(data.get("cpu_cores") or "").strip()
     generic = str(data.get("cpu") or "").strip()
-    if precise and not _is_cpu_identifier(precise):
-        return precise
+    # The saved scan may belong to an older install or a different computer.
+    # Prefer the name reported by this running Windows system.
     if sys.platform == "win32":
         try:
             import winreg
@@ -55,6 +55,8 @@ def recommended_cpu_name(data):
                     return " ".join(name.split())
         except (OSError, ImportError, ValueError):
             pass
+    if precise and not _is_cpu_identifier(precise):
+        return precise
     return generic or precise or "CPU"
 
 

@@ -7,11 +7,13 @@ title FFClass - Windows launcher
 echo.
 echo FFClass
 echo 1. Run from source
-echo 2. Build Windows EXE and release ZIP
-echo 3. Exit
-choice /C 123 /N /M "Select 1, 2, or 3: "
-if errorlevel 3 exit /b 0
-if errorlevel 2 goto BUILD
+echo 2. Build Windows installer EXE
+echo 3. Build portable ZIP
+echo 4. Exit
+choice /C 1234 /N /M "Select 1, 2, 3, or 4: "
+if errorlevel 4 exit /b 0
+if errorlevel 3 goto BUILD
+if errorlevel 2 goto INSTALLER
 goto RUN
 
 :PREPARE
@@ -74,6 +76,30 @@ if errorlevel 1 (
 if errorlevel 1 goto FAILED
 echo.
 echo Ready to upload: dist\FFClass-Windows.zip
+goto MENU
+
+:INSTALLER
+call :PREPARE
+if errorlevel 1 goto FAILED
+call :MEDIA
+if errorlevel 1 (
+    echo Building needs a local FFmpeg pair in bin. See README.md.
+    goto FAILED
+)
+if not exist "bin\ffclass_ffmpeg.json" (
+    echo Building needs bin\ffclass_ffmpeg.json from stage_ffmpeg.py. See README.md.
+    goto FAILED
+)
+"%FFCLASS_PY%" -c "import PyInstaller" >nul 2>nul
+if errorlevel 1 (
+    echo Installing build dependency...
+    "%FFCLASS_PY%" -m pip install --disable-pip-version-check -r requirements-build.txt
+    if errorlevel 1 goto FAILED
+)
+"%FFCLASS_PY%" build_installer.py
+if errorlevel 1 goto FAILED
+echo.
+echo Ready to test: dist\FFClass-Setup-0.1.0-Windows.exe
 goto MENU
 
 :FAILED

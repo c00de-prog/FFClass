@@ -1,0 +1,17 @@
+FFClass for Windows — portable version
+
+1. Extract the whole ZIP archive. Do not launch the EXE from inside the archive.
+2. Open FFClass/FFClass.exe. Keep the _internal folder beside it.
+3. Choose a video and task. FFmpeg is bundled; Python is not required.
+4. To remove the app and its local settings, close FFClass and double-click
+   FFClass/Remove FFClass.cmd. Move any personal files out of the FFClass
+   folder first. Videos outside that folder will remain on disk.
+
+Русский
+
+1. Распакуйте ZIP целиком. Не запускайте EXE прямо из архива.
+2. Запустите FFClass/FFClass.exe. Папка _internal должна оставаться рядом.
+3. Выберите видео и задачу. FFmpeg уже включён, Python не нужен.
+4. Чтобы удалить приложение и его настройки, закройте FFClass и запустите
+   FFClass/Remove FFClass.cmd. Сначала перенесите личные файлы из папки
+   FFClass: видео вне этой папки не удаляются.
